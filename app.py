@@ -7,13 +7,14 @@ import traceback
 from threading import Thread
 from flask import Flask
 
+# Ladda miljövariabler
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
 CLIENT_ID = os.getenv("CLIENT_ID")
-GUILD_ID = os.getenv("GUILD_ID")  # valfritt, men rekommenderat för snabb sync
+GUILD_ID = os.getenv("GUILD_ID")
 
-# Flask liten webserver (endast om PORT är satt, för Render web service)
+# ---------------- Flask webserver (för Render) ----------------
 def run_webserver():
     app = Flask(__name__)
 
@@ -23,48 +24,40 @@ def run_webserver():
 
     port = int(os.environ.get("PORT", 0))
     if port:
-        print(f"Startar webserver på port {port} (Render Web Service-läge)")
-        # Obs: Flask dev-server används enbart som heartbeat för Render gratisplan
+        print(f"🌐 Startar webserver på port {port} (Render Web Service-läge)")
         app.run(host="0.0.0.0", port=port)
     else:
-        print("Ingen PORT satt — kör som Background Worker (ingen webserver startad).")
+        print("💤 Ingen PORT satt — kör som Background Worker (ingen webserver startad).")
 
 if os.environ.get("PORT"):
     Thread(target=run_webserver).start()
 
-# ---- Discord bot setup ----
-intents = discord.Intents.default()
+# ---------------- Discord bot setup ----------------
+intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
     print(f"✅ Inloggad som {bot.user} (id: {bot.user.id})")
 
-    # Försök sync i flera steg och logga bra info
     try:
         if GUILD_ID:
-            try:
-                guild_obj = discord.Object(id=int(GUILD_ID))
-                synced = await bot.tree.sync(guild=guild_obj)
-                print(f"✅ Slashkommandon synkade till guild {GUILD_ID}: {[c.name for c in synced]}")
-                return
-            except Exception as e_guild:
-                print("⚠️ Misslyckades synka till specificerad guild (försöker global sync).")
-                traceback.print_exc()
-                # fortsätt för att försöka global sync
-        # Global sync (kan ta upp till ~1 timme att synas i alla guilds)
-        try:
-            synced_global = await bot.tree.sync()
-            print(f"✅ Global sync klar. Registrerade/uppdaterade kommandon: {[c.name for c in synced_global]}")
-        except Exception as e_global:
-            print("❌ Misslyckades med global slash-command sync.")
-            traceback.print_exc()
-
-    except Exception as e:
-        print("❌ Okänt fel vid on_ready sync:")
+            guild = discord.Object(id=int(GUILD_ID))
+            synced = await bot.tree.sync(guild=guild)
+            print(f"🔁 Slashkommandon synkade till guild {GUILD_ID}: {[c.name for c in synced]}")
+        else:
+            synced = await bot.tree.sync()
+            print(f"🌍 Global sync klar: {[c.name for c in synced]}")
+    except Exception:
+        print("❌ Fel vid slash-command sync:")
         traceback.print_exc()
 
-# ---- /nuke kommando ----
+# ---------------- Testkommando /ping ----------------
+@bot.tree.command(name="ping", description="Svarar med Pong! Används för att testa att boten fungerar.")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message("🏓 Pong! Jag fungerar som jag ska!")
+
+# ---------------- /nuke kommando ----------------
 @bot.tree.command(name="nuke", description="Visar en cool nuke-effekt (fejk, samlar INTE IP)")
 async def nuke(interaction: discord.Interaction):
     await interaction.response.defer()
@@ -104,14 +97,16 @@ async def nuke(interaction: discord.Interaction):
     fake_ip = "127.0.0.1"
     final = discord.Embed(
         title="✅ KLAR",
-        description=f"Operation slutförd.\n\nVisad (påhittad) IP: `{fake_ip}`\n\nDetta var en visuell demonstration — inga IPs togs eller loggades.",
+        description=(
+            f"Operation slutförd.\n\nVisad (påhittad) IP: `{fake_ip}`\n\n"
+            "Detta var en visuell demonstration — inga IPs togs eller loggades."
+        ),
         color=0x00FF00
     )
     await msg.edit(embed=final)
 
-# ---- Starta bot ----
+# ---------------- Starta bot ----------------
 if not TOKEN:
-    raise RuntimeError("BOT_TOKEN saknas i miljövariabler!")
+    raise RuntimeError("❌ BOT_TOKEN saknas i miljövariabler!")
 
-# Kör bot (blockerar)
 bot.run(TOKEN)
