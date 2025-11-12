@@ -1,11 +1,9 @@
 import os
 import asyncio
 import discord
-from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
-
-# För Render fallback (endast om PORT finns)
+import traceback
 from threading import Thread
 from flask import Flask
 
@@ -13,9 +11,9 @@ load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
 CLIENT_ID = os.getenv("CLIENT_ID")
-GUILD_ID = os.getenv("GUILD_ID")
+GUILD_ID = os.getenv("GUILD_ID")  # valfritt, men rekommenderat för snabb sync
 
-# ---- Flask Webserver för Render (endast om PORT finns) ----
+# Flask liten webserver (endast om PORT är satt, för Render web service)
 def run_webserver():
     app = Flask(__name__)
 
@@ -26,11 +24,11 @@ def run_webserver():
     port = int(os.environ.get("PORT", 0))
     if port:
         print(f"Startar webserver på port {port} (Render Web Service-läge)")
+        # Obs: Flask dev-server används enbart som heartbeat för Render gratisplan
         app.run(host="0.0.0.0", port=port)
     else:
-        print("Ingen PORT satt — kör som Background Worker.")
+        print("Ingen PORT satt — kör som Background Worker (ingen webserver startad).")
 
-# starta server i bakgrunden
 if os.environ.get("PORT"):
     Thread(target=run_webserver).start()
 
@@ -41,15 +39,30 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 @bot.event
 async def on_ready():
     print(f"✅ Inloggad som {bot.user} (id: {bot.user.id})")
+
+    # Försök sync i flera steg och logga bra info
     try:
         if GUILD_ID:
-            guild_obj = discord.Object(id=int(GUILD_ID))
-            synced = await bot.tree.sync(guild=guild_obj)
-        else:
-            synced = await bot.tree.sync()
-        print(f"Slashkommandon synkade: {[cmd.name for cmd in synced]}")
+            try:
+                guild_obj = discord.Object(id=int(GUILD_ID))
+                synced = await bot.tree.sync(guild=guild_obj)
+                print(f"✅ Slashkommandon synkade till guild {GUILD_ID}: {[c.name for c in synced]}")
+                return
+            except Exception as e_guild:
+                print("⚠️ Misslyckades synka till specificerad guild (försöker global sync).")
+                traceback.print_exc()
+                # fortsätt för att försöka global sync
+        # Global sync (kan ta upp till ~1 timme att synas i alla guilds)
+        try:
+            synced_global = await bot.tree.sync()
+            print(f"✅ Global sync klar. Registrerade/uppdaterade kommandon: {[c.name for c in synced_global]}")
+        except Exception as e_global:
+            print("❌ Misslyckades med global slash-command sync.")
+            traceback.print_exc()
+
     except Exception as e:
-        print("Misslyckades att synka kommandon:", e)
+        print("❌ Okänt fel vid on_ready sync:")
+        traceback.print_exc()
 
 # ---- /nuke kommando ----
 @bot.tree.command(name="nuke", description="Visar en cool nuke-effekt (fejk, samlar INTE IP)")
@@ -69,7 +82,6 @@ async def nuke(interaction: discord.Interaction):
         ("Slutför", 0x00FF00, 100)
     ]
 
-    # Skapa första embed
     embed = discord.Embed(
         title="🔴 NUKE INITIERAD",
         description="Förbereder...",
@@ -78,7 +90,6 @@ async def nuke(interaction: discord.Interaction):
     embed.set_footer(text="Detta är en visuell effekt — ingen data samlas.")
     msg = await interaction.followup.send(embed=embed)
 
-    # Loop igenom stegen
     for desc, color, pct in steps:
         await asyncio.sleep(1.0)
         e = discord.Embed(
@@ -102,4 +113,5 @@ async def nuke(interaction: discord.Interaction):
 if not TOKEN:
     raise RuntimeError("BOT_TOKEN saknas i miljövariabler!")
 
+# Kör bot (blockerar)
 bot.run(TOKEN)
