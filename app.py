@@ -13,13 +13,11 @@ from flask import Flask
 # =====================================================
 load_dotenv()
 
-# Sätt upp loggning
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[logging.StreamHandler()]
 )
-
 logger = logging.getLogger("bot_debug")
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -44,7 +42,7 @@ def run_webserver():
 
     @app.route("/")
     def home():
-        return "✅ Bot är igång (debug-läge)"
+        return "✅ Bot är igång (Render debug-läge)"
 
     port = int(os.environ.get("PORT", 0))
     if port:
@@ -79,12 +77,6 @@ async def on_ready():
         logger.error(traceback.format_exc())
 
 @bot.event
-async def on_command_error(ctx, error):
-    logger.error(f"⚠️ Fel i kommando: {ctx.command}")
-    logger.error(traceback.format_exc())
-    await ctx.send(f"❌ Ett fel uppstod: `{error}`")
-
-@bot.event
 async def on_error(event_method, *args, **kwargs):
     logger.error(f"🚨 Global Discord-fel i event '{event_method}'")
     logger.error(traceback.format_exc())
@@ -95,53 +87,10 @@ async def on_error(event_method, *args, **kwargs):
 @bot.tree.command(name="ping", description="Testar om boten svarar.")
 async def ping(interaction: discord.Interaction):
     try:
-        await interaction.response.send_message("🏓 Pong! Jag fungerar som jag ska!")
-        logger.info(f"Användare {interaction.user} körde /ping i {interaction.guild}.")
+        await interaction.response.send_message("🏓 Pong! Jag fungerar!")
+        logger.info(f"/ping kördes av {interaction.user}")
     except Exception:
         logger.error("Fel i /ping:")
-        logger.error(traceback.format_exc())
-
-@bot.tree.command(name="nuke", description="Visar en fejk-nuke-effekt (för skojs skull).")
-async def nuke(interaction: discord.Interaction):
-    try:
-        await interaction.response.defer()
-
-        def progress_bar(pct: int) -> str:
-            total = 20
-            filled = int((pct / 100) * total)
-            return "▰" * filled + "▱" * (total - filled) + f" {pct}%"
-
-        steps = [
-            ("Initiering", 0xFF9900, 10),
-            ("Skannar portar", 0xFF6600, 30),
-            ("Bryter igenom brandvägg", 0xFF3300, 55),
-            ("Extraherar data", 0xFF0000, 80),
-            ("Slutför", 0x00FF00, 100)
-        ]
-
-        embed = discord.Embed(title="🔴 NUKE INITIERAD", description="Förbereder...", color=0xFF9900)
-        embed.set_footer(text="Detta är en visuell effekt — ingen data samlas.")
-        msg = await interaction.followup.send(embed=embed)
-
-        for desc, color, pct in steps:
-            await asyncio.sleep(1.0)
-            e = discord.Embed(title="🔴 NUKE", description=f"**{desc}**\n\n{progress_bar(pct)}", color=color)
-            e.set_footer(text="Endast en demo. Inga IPs samlas eller loggas.")
-            await msg.edit(embed=e)
-
-        await asyncio.sleep(1.0)
-        fake_ip = "127.0.0.1"
-        final = discord.Embed(
-            title="✅ KLAR",
-            description=(
-                f"Operation slutförd.\n\nVisad (påhittad) IP: `{fake_ip}`\n\n"
-                "Detta var en visuell demonstration — inga IPs togs eller loggades."
-            ),
-            color=0x00FF00
-        )
-        await msg.edit(embed=final)
-    except Exception:
-        logger.error("Fel i /nuke:")
         logger.error(traceback.format_exc())
 
 # =====================================================
