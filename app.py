@@ -1,104 +1,106 @@
-import os
-import asyncio
 import discord
 from discord.ext import commands
-from dotenv import load_dotenv
-import traceback
-import logging
-from threading import Thread
-from flask import Flask
+from discord import app_commands
+import os
+import random
+from datetime import datetime, timedelta
+from collections import defaultdict
+import asyncio
+import aiohttp
+import requests
 
-# =====================================================
-#  LOGGNING & MILJÖVARIABLER
-# =====================================================
-load_dotenv()
+# ===== Miljövariabler =====
+TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+SELF_ASSIGN_ROLE_NAME = os.getenv('SELF_ASSIGN_ROLE')
+DEPLOY_HOOK_URL = os.getenv('DEPLOY_HOOK_URL')
+OWNER_ID = int(os.getenv('OWNER_ID', '0'))
+WELCOME_CHANNEL_NAME = "welcome"
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.StreamHandler()]
-)
-logger = logging.getLogger("bot_debug")
+# ===== Intents =====
+intents = discord.Intents.default()
+intents.members = True
+intents.message_content = True
+intents.guilds = True
 
-TOKEN = os.getenv("BOT_TOKEN")
-CLIENT_ID = os.getenv("CLIENT_ID")
-GUILD_ID = os.getenv("GUILD_ID")
-PORT = os.getenv("PORT")
+bot = commands.Bot(command_prefix='!', intents=intents)
 
-logger.info("🔍 Miljövariabler:")
-logger.info(f"BOT_TOKEN finns: {bool(TOKEN)}")
-logger.info(f"CLIENT_ID: {CLIENT_ID}")
-logger.info(f"GUILD_ID: {GUILD_ID}")
-logger.info(f"PORT: {PORT}")
+# ===== KONFIG =====
+AUTO_ROLE_NAME = "Member"
+ANTI_RAID_TIME_WINDOW = 60
+ANTI_RAID_THRESHOLD = 5
+LOCKDOWN_DURATION = 300
 
-if not TOKEN:
-    raise RuntimeError("❌ BOT_TOKEN saknas i miljövariabler!")
+# ===== Variabler =====
+join_times = defaultdict(list)
+locked_guilds = set()
+start_time = datetime.utcnow()  # För uptime
 
-# =====================================================
-#  WEBBSERVER (för Render / ping)
-# =====================================================
-def run_webserver():
-    app = Flask(__name__)
+# ===== Nuke Kommando =====
+@bot.tree.command(name="nuke", description="Raderar alla kanaler och rensar servern (endast ägaren)")
+@app_commands.checks.has_permissions(administrator=True)
+async def nuke(interaction: discord.Interaction):
+    """Raderar alla kanaler och rensar servern."""
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message("❌ Du har inte behörighet att använda nuke-kommandot.", ephemeral=True)
+        return
 
-    @app.route("/")
-    def home():
-        return "✅ Bot är igång (Render debug-läge)"
+    guild = interaction.guild
 
-    port = int(os.environ.get("PORT", 0))
-    if port:
-        logger.info(f"🌐 Startar Flask-webserver på port {port}")
-        app.run(host="0.0.0.0", port=port)
+    try:
+        # Radera alla textkanaler
+        for channel in guild.text_channels:
+            try:
+                await channel.delete()
+                print(f"🔨 Raderade kanal {channel.name}")
+            except Exception as e:
+                print(f"❌ Kunde inte radera kanal {channel.name}: {e}")
+
+        # Radera alla röstkanaler
+        for channel in guild.voice_channels:
+            try:
+                await channel.delete()
+                print(f"🔨 Raderade röstkanal {channel.name}")
+            except Exception as e:
+                print(f"❌ Kunde inte radera röstkanal {channel.name}: {e}")
+
+        # Ta bort alla roller (förutom @everyone)
+        for role in guild.roles:
+            if role.name != "@everyone":
+                try:
+                    await role.delete()
+                    print(f"🔨 Raderade roll {role.name}")
+                except Exception as e:
+                    print(f"❌ Kunde inte radera roll {role.name}: {e}")
+
+        # Skapa om @everyone-rollen med standardbehörigheter
+        everyone_role = guild.get_role(guild.id)
+        if everyone_role:
+            await everyone_role.edit(permissions=discord.Permissions.all())
+            print("🔧 Återställde @everyone-rollen.")
+
+        # Skapa nya kanaler
+        await guild.create_text_channel("general")
+        await guild.create_voice_channel("General Voice")
+
+        await interaction.response.send_message("⚠️ Servern har blivit rensad (nuked)! Allt är nu borttaget.")
+
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Ett fel inträffade vid nuke: {e}", ephemeral=True)
+
+# ===== Starta boten =====
+if __name__ == "__main__":
+    if not TOKEN:
+        print("❌ ERROR: DISCORD_BOT_TOKEN hittades inte i miljövariablerna!")
     else:
-        logger.warning("💤 Ingen PORT satt — ingen Flask-webserver startas.")
-
-if PORT:
-    Thread(target=run_webserver, daemon=True).start()
-
-# =====================================================
-#  DISCORD-BOT SETUP
-# =====================================================
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-@bot.event
-async def on_ready():
-    logger.info(f"✅ Inloggad som {bot.user} (ID: {bot.user.id})")
-
-    try:
-        if GUILD_ID:
-            guild = discord.Object(id=int(GUILD_ID))
-            synced = await bot.tree.sync(guild=guild)
-            logger.info(f"🔁 Synkade {len(synced)} kommandon till GUILD {GUILD_ID}: {[c.name for c in synced]}")
-        else:
-            synced = await bot.tree.sync()
-            logger.info(f"🌍 Global sync: {[c.name for c in synced]}")
-    except Exception:
-        logger.error("❌ Fel vid slash-kommandosynk:")
-        logger.error(traceback.format_exc())
-
-@bot.event
-async def on_error(event_method, *args, **kwargs):
-    logger.error(f"🚨 Global Discord-fel i event '{event_method}'")
-    logger.error(traceback.format_exc())
-
-# =====================================================
-#  TESTKOMMANDON
-# =====================================================
-@bot.tree.command(name="ping", description="Testar om boten svarar.")
-async def ping(interaction: discord.Interaction):
-    try:
-        await interaction.response.send_message("🏓 Pong! Jag fungerar!")
-        logger.info(f"/ping kördes av {interaction.user}")
-    except Exception:
-        logger.error("Fel i /ping:")
-        logger.error(traceback.format_exc())
-
-# =====================================================
-#  STARTA BOT
-# =====================================================
-try:
-    logger.info("🚀 Startar Discord-bot...")
-    bot.run(TOKEN, log_handler=None, log_level=logging.DEBUG)
-except Exception:
-    logger.critical("💀 Kunde inte starta boten!")
-    logger.critical(traceback.format_exc())
+        print("🚀 Startar Discord bot...")
+        try:
+            bot.run(TOKEN)
+        except Exception as e:
+            print(f"❌ Boten kraschade: {e}")
+            if DEPLOY_HOOK_URL:
+                print("🔁 Försöker starta om via Render Deploy Hook...")
+                try:
+                    requests.post(DEPLOY_HOOK_URL)
+                    print("✅ Deploy Hook kallad — Render startar om boten.")
+                except Exception as err:
+                    print(f"❌ Kunde inte kalla Render Deploy Hook: {err}")
